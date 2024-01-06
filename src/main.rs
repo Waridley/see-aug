@@ -78,6 +78,9 @@ fn app(cx: Scope) -> Element {
 		})
 	});
 	
+	// FIXME: Pen is causing both Touch and Mouse start and end events,
+	//    resulting in 0-length path at start and duplicate end point
+	
 	let on_touch = |e: TouchEvent| {
 		let TouchData {
 			element_coordinates: pos,
@@ -88,14 +91,14 @@ fn app(cx: Scope) -> Element {
 		} = **e;
 		let force = if let Some(force) = force {
 			let force = force.normalized();
-			if force < 0.0001 {
-				// FIXME: This is necessary for pen support on Windows, but I suspect it would break touch support
+			if force < 0.0001 && phase != TouchPhase::Ended {
+				// FIXME: This is necessary for pen support, but I suspect it would break normal touch
 				// 		on devices without force support.
 				return
 			}
 			force
 		} else {
-			// FIXME: This is necessary for pen support on Windows, but I suspect it would break touch support
+			// FIXME: This is necessary for pen support on Windows, but I suspect it would break normal touch
 			// 		on devices without force support.
 			return
 		};
@@ -114,7 +117,7 @@ fn app(cx: Scope) -> Element {
 			channel
 				.write()
 				.0
-				.send(PathMsg::Start(e.element_coordinates, 0.5))
+				.send(dbg!(PathMsg::Start(e.element_coordinates, 0.5)))
 				.unwrap();
 		}
 	};
@@ -133,7 +136,7 @@ fn app(cx: Scope) -> Element {
 			channel
 				.write()
 				.0
-				.send(PathMsg::End(e.element_coordinates))
+				.send(dbg!(PathMsg::End(e.element_coordinates)))
 				.unwrap();
 		}
 	};
