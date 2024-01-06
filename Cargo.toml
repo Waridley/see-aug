@@ -1,0 +1,15 @@
+[package]
+name = "see-aug"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+freya = { version = "0.1.8", features = ["devtools"] }
+dioxus = { version = "0.4", features = ["macro", "hooks"] }
+skia-safe = "0.63"
+
+crossbeam = "0.8.3"
+image = "0.24"
+
+[profile.dev]
+opt-level = 1
