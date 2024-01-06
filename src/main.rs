@@ -63,13 +63,11 @@ fn app(cx: Scope) -> Element {
 				}
 			}
 			let mut paint = Paint::default();
-			paint.set_stroke_width(4.0);
 			for mut points in &*paths {
 				let mut points = points.iter().copied();
 				let mut last = points.next().unwrap();
-				paint.set_alpha((255.0 * last.1) as u8);
 				for (point, force) in points {
-					paint.set_alpha((255.0 * force) as u8);
+					paint.set_stroke_width(12.0 * force as f32);
 					let start = skia_safe::Point::new(last.0.x as f32, last.0.y as f32);
 					let end = skia_safe::Point::new(point.x as f32, point.y as f32);
 
@@ -91,7 +89,9 @@ fn app(cx: Scope) -> Element {
 		let force = if let Some(force) = force {
 			force.normalized()
 		} else {
-			1.0
+			// FIXME: This is necessary for pen support on Windows, but I suspect it would break touch support
+			// 		on devices without force support.
+			return
 		};
 		let msg = match phase {
 			TouchPhase::Started => PathMsg::Start(pos, force),
@@ -108,7 +108,7 @@ fn app(cx: Scope) -> Element {
 			channel
 				.write()
 				.0
-				.send(PathMsg::Start(e.element_coordinates, 1.0))
+				.send(PathMsg::Start(e.element_coordinates, 0.5))
 				.unwrap();
 		}
 	};
@@ -117,12 +117,12 @@ fn app(cx: Scope) -> Element {
 			channel
 				.write()
 				.0
-				.send(PathMsg::Move(e.element_coordinates, 1.0))
+				.send(PathMsg::Move(e.element_coordinates, 0.5))
 				.unwrap();
 		}
 	};
-	let end_path = |e: MouseEvent| {
-		if matches!(e.trigger_button, Some(MouseButton::Left)) {
+	let end_path = |e: PointerEvent| {
+		if matches!(e.point_type, PointerType::Mouse { trigger_button: Some(MouseButton::Left) }) {
 			pen_down.set(false);
 			channel
 				.write()
@@ -142,7 +142,7 @@ fn app(cx: Scope) -> Element {
 			ontouchend: on_touch,
 			onmousedown: start_path,
 			onmouseover: continue_path,
-			onclick: end_path,
+			onpointerup: end_path,
 			Canvas {
 				canvas: canvas,
 				width: "100%",
