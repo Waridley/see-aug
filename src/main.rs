@@ -87,7 +87,13 @@ fn app(cx: Scope) -> Element {
 			..
 		} = **e;
 		let force = if let Some(force) = force {
-			force.normalized()
+			let force = force.normalized();
+			if force < 0.0001 {
+				// FIXME: This is necessary for pen support on Windows, but I suspect it would break touch support
+				// 		on devices without force support.
+				return
+			}
+			force
 		} else {
 			// FIXME: This is necessary for pen support on Windows, but I suspect it would break touch support
 			// 		on devices without force support.
