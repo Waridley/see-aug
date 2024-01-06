@@ -3,9 +3,6 @@ name = "see-aug"
 version = "0.1.0"
 edition = "2021"
 
-[patch.crates-io]
-winit = { version = "0.28.6", git = "https://github.com/Waridley/winit.git", branch = "pen_0.28.6" }
-
 [dependencies]
 freya = { version = "0.1.8", features = ["devtools"] }
 dioxus = { version = "0.4", features = ["macro", "hooks"] }
