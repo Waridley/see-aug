@@ -3,17 +3,13 @@
 	windows_subsystem = "windows"
 )]
 
-use dioxus::core::AttributeValue;
-use freya::elements::{onmousedown, ontouchstart};
 use freya::events::touch::TouchPhase;
 use freya::prelude::*;
-use image::DynamicImage::ImageRgba8;
-use image::{ImageOutputFormat, Pixel, Rgba, RgbaImage};
+
 use pointer::{MouseButton, PointerType};
-use skia_safe::wrapper::NativeTransmutableWrapper;
-use skia_safe::{AlphaType, ColorType, Data, ISize, ImageInfo, Paint, PathBuilder, RCHandle, PathEffect, Matrix};
+use skia_safe::Paint;
 use std::collections::VecDeque;
-use std::io::Cursor;
+
 use std::sync::{Arc, Mutex};
 
 fn main() {
@@ -34,27 +30,29 @@ enum PathMsg {
 
 fn app(cx: Scope) -> Element {
 	let pen_down = use_state(cx, || false);
-	
+
 	let channel = use_ref(cx, || crossbeam::channel::unbounded());
-	let paths = use_ref(cx, || Arc::new(Mutex::new(Vec::<VecDeque<(CursorPoint, f64)>>::new())));
+	let paths = use_ref(cx, || {
+		Arc::new(Mutex::new(Vec::<VecDeque<(CursorPoint, f64)>>::new()))
+	});
 
 	let canvas = use_canvas(cx, channel, |channel| {
 		let rx = channel.read().1.clone();
 		let paths = paths.read().clone();
-		Box::new(move |canvas, fonts, area| {
+		Box::new(move |canvas, _fonts, _area| {
 			let mut paths = paths.lock().unwrap();
 			for msg in rx.try_iter() {
 				match msg {
 					PathMsg::Start(pos, force) => paths.push(VecDeque::from([(pos, force)])),
 					PathMsg::Move(pos, force) => {
-						let Some(mut path) = paths.last_mut() else {
+						let Some(path) = paths.last_mut() else {
 							eprintln!("ERROR: trying to continue path that is not started");
 							continue;
 						};
 						path.push_back((pos, force));
 					}
 					PathMsg::End(pos) => {
-						let Some(mut path) = paths.last_mut() else {
+						let Some(path) = paths.last_mut() else {
 							eprintln!("ERROR: trying to continue path that is not started");
 							continue;
 						};
@@ -63,7 +61,7 @@ fn app(cx: Scope) -> Element {
 				}
 			}
 			let mut paint = Paint::default();
-			for mut points in &*paths {
+			for points in &*paths {
 				let mut points = points.iter().copied();
 				let mut last = points.next().unwrap();
 				for (point, force) in points {
@@ -77,14 +75,14 @@ fn app(cx: Scope) -> Element {
 			}
 		})
 	});
-	
+
 	// FIXME: Pen is causing both Touch and Mouse start and end events,
 	//    resulting in 0-length path at start and duplicate end point
-	
+
 	let on_touch = |e: TouchEvent| {
 		let TouchData {
 			element_coordinates: pos,
-			finger_id,
+			finger_id: _,
 			force,
 			phase,
 			..
@@ -94,13 +92,13 @@ fn app(cx: Scope) -> Element {
 			if force < 0.0001 && phase != TouchPhase::Ended {
 				// FIXME: This is necessary for pen support, but I suspect it would break normal touch
 				// 		on devices without force support.
-				return
+				return;
 			}
 			force
 		} else {
 			// FIXME: This is necessary for pen support on Windows, but I suspect it would break normal touch
 			// 		on devices without force support.
-			return
+			return;
 		};
 		let msg = match phase {
 			TouchPhase::Started => PathMsg::Start(pos, force),
@@ -131,7 +129,12 @@ fn app(cx: Scope) -> Element {
 		}
 	};
 	let end_path = |e: PointerEvent| {
-		if matches!(e.point_type, PointerType::Mouse { trigger_button: Some(MouseButton::Left) }) {
+		if matches!(
+			e.point_type,
+			PointerType::Mouse {
+				trigger_button: Some(MouseButton::Left)
+			}
+		) {
 			pen_down.set(false);
 			channel
 				.write()
