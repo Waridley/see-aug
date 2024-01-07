@@ -10,6 +10,7 @@ skia-safe = "0.63"
 
 crossbeam = "0.8.3"
 image = "0.24"
+log = "0.4.20"
 
 [profile.dev]
 opt-level = 1

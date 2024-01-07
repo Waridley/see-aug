@@ -1,3 +1,4 @@
+#![feature(array_windows)]
 #![cfg_attr(
 	all(not(debug_assertions), target_os = "windows"),
 	windows_subsystem = "windows"
@@ -7,10 +8,12 @@ use freya::events::touch::TouchPhase;
 use freya::prelude::*;
 
 use pointer::{MouseButton, PointerType};
-use skia_safe::{Paint, Path, Point};
+use skia_safe::{BlendMode, Color, Paint, Path, Point, Vertices};
 use std::collections::VecDeque;
 
 use std::sync::{Arc, Mutex};
+use log::error;
+use skia_safe::vertices::VertexMode;
 
 fn main() {
 	launch_cfg(
@@ -33,7 +36,7 @@ fn app(cx: Scope) -> Element {
 
 	let channel = use_ref(cx, || crossbeam::channel::unbounded());
 	let paths = use_ref(cx, || {
-		Arc::new(Mutex::new(Vec::<VecDeque<(CursorPoint, f64)>>::new()))
+		Arc::new(Mutex::new(Vec::<Vec<(CursorPoint, f64)>>::new()))
 	});
 
 	let canvas = use_canvas(cx, channel, |channel| {
@@ -43,58 +46,112 @@ fn app(cx: Scope) -> Element {
 			let mut paths = paths.lock().unwrap();
 			for msg in rx.try_iter() {
 				match msg {
-					PathMsg::Start(pos, force) => paths.push(VecDeque::from([(pos, force)])),
+					PathMsg::Start(pos, force) => paths.push(vec![(pos, force)]),
 					PathMsg::Move(pos, force) => {
 						let Some(path) = paths.last_mut() else {
-							eprintln!("ERROR: trying to continue path that is not started");
+							error!("trying to continue path that is not started");
 							continue;
 						};
-						let dist = pos - path.back().unwrap().0;
+						let dist = pos - path.last().unwrap().0;
 						if dist.length() > 3.0 { // don't draw lines too short
-							path.push_back((pos, force));
+							path.push((pos, force));
 						}
 					}
 					PathMsg::End(pos) => {
 						let Some(path) = paths.last_mut() else {
-							eprintln!("ERROR: trying to continue path that is not started");
+							error!("trying to continue path that is not started");
 							continue;
 						};
-						path.push_back((pos, 0.0));
+						path.push((pos, 0.0));
 					}
 				}
 			}
 			let paint = Paint::default();
 			for points in &*paths {
-				let mut path = Path::new();
-				let mut points = points.iter().copied();
-				let mut came_from = Option::<(CursorPoint, f64)>::None;
-				let mut last = points.next().unwrap();
-				for (point, force) in points {
-					let start = Point::new(last.0.x as f32, last.0.y as f32);
-					let end = Point::new(point.x as f32, point.y as f32);
+				let len = points.len();
+				if len == 1 {
+					error!("Length should be at least 2");
+					continue
+				}
+				
+				let mut verts = Vec::new();
+				let mut colors = Vec::new();
+				
+				let (start, start_force) = points[0];
+				let (end, _) = points[1];
+				let start = Point::new(start.x as f32, start.y as f32);
+				let end = Point::new(end.x as f32, end.y as f32);
+				let dir = end - start;
+				let mut normal = Point::new(-dir.y, dir.x);
+				normal.normalize();
+				
+				let start_offset = normal * 6.0;
+				verts.push(start + start_offset);
+				verts.push(start - start_offset);
+				let start_color = Color::from_argb((255.0 * start_force) as u8, 0, 0, 0);
+				colors.push(start_color);
+				colors.push(start_color);
+				
+				for [(prev, _), (next, next_force)] in points.array_windows().copied() {
+					let prev = Point::new(prev.x as f32, prev.y as f32);
+					let next = Point::new(next.x as f32, next.y as f32);
 					
-					let dir = end - start;
-					let prev_dir = if let Some(came_from) = came_from {
-						start - Point::new(came_from.0.x as f32, came_from.0.y as f32)
-					} else {
-						dir
-					};
+					let dir = next - prev;
 					let mut normal = Point::new(-dir.y, dir.x);
 					normal.normalize();
-					let mut prev_normal = Point::new(-prev_dir.y, prev_dir.x);
-					prev_normal.normalize();
-					let start_offset = prev_normal * (last.1 as f32) * 6.0;
-					let end_offset = normal * (force as f32) * 6.0;
-					let p1 = start + start_offset;
-					let p2 = start - start_offset;
-					let p3 = end - end_offset;
-					let p4 = end + end_offset;
-					
-					path.add_poly(&[p1, p2, p3, p4], true);
-					came_from = Some(last);
-					last = (point, force);
-				}
-				canvas.draw_path(&path, &paint);
+					let next_force = next_force as f32;
+					let next_offset = normal * 6.0;
+					let p3 = next - next_offset;
+					let p4 = next + next_offset;
+					let a2 = (255.0 * next_force) as u8;
+					let next_color = Color::from_argb(a2, 0, 0, 0);
+					verts.push(p3);
+					verts.push(p4);
+					colors.push(next_color);
+					colors.push(next_color)
+				};
+				
+				let texs = vec![Point::default(); verts.len()];
+				let verts = Vertices::new_copy(
+					VertexMode::TriangleStrip,
+					&verts,
+					&texs,
+					&colors,
+					None
+				);
+				
+				canvas.draw_vertices(&verts, BlendMode::Multiply, &paint);
+				
+				// let mut path = Path::new();
+				// let mut points = points.iter().copied();
+				// let mut came_from = Option::<(CursorPoint, f64)>::None;
+				// let mut last = points.next().unwrap();
+				// for (point, force) in points {
+				// 	let start = Point::new(last.0.x as f32, last.0.y as f32);
+				// 	let end = Point::new(point.x as f32, point.y as f32);
+				//
+				// 	let dir = end - start;
+				// 	let prev_dir = if let Some(came_from) = came_from {
+				// 		start - Point::new(came_from.0.x as f32, came_from.0.y as f32)
+				// 	} else {
+				// 		dir
+				// 	};
+				// 	let mut normal = Point::new(-dir.y, dir.x);
+				// 	normal.normalize();
+				// 	let mut prev_normal = Point::new(-prev_dir.y, prev_dir.x);
+				// 	prev_normal.normalize();
+				// 	let start_offset = prev_normal * (last.1 as f32) * 6.0;
+				// 	let end_offset = normal * (force as f32) * 6.0;
+				// 	let p1 = start + start_offset;
+				// 	let p2 = start - start_offset;
+				// 	let p3 = end - end_offset;
+				// 	let p4 = end + end_offset;
+				//
+				// 	path.add_poly(&[p1, p2, p3, p4], true);
+				// 	came_from = Some(last);
+				// 	last = (point, force);
+				// }
+				// canvas.draw_path(&path, &paint);
 			}
 		})
 	});

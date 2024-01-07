@@ -3401,6 +3401,7 @@ dependencies = [
  "dioxus",
  "freya",
  "image",
+ "log",
  "skia-safe",
 ]
 
