@@ -7,7 +7,7 @@ use freya::events::touch::TouchPhase;
 use freya::prelude::*;
 
 use pointer::{MouseButton, PointerType};
-use skia_safe::Paint;
+use skia_safe::{Paint, Path, Point};
 use std::collections::VecDeque;
 
 use std::sync::{Arc, Mutex};
@@ -49,7 +49,10 @@ fn app(cx: Scope) -> Element {
 							eprintln!("ERROR: trying to continue path that is not started");
 							continue;
 						};
-						path.push_back((pos, force));
+						let dist = pos - path.back().unwrap().0;
+						if dist.length() > 3.0 { // don't draw lines too short
+							path.push_back((pos, force));
+						}
 					}
 					PathMsg::End(pos) => {
 						let Some(path) = paths.last_mut() else {
@@ -60,18 +63,38 @@ fn app(cx: Scope) -> Element {
 					}
 				}
 			}
-			let mut paint = Paint::default();
+			let paint = Paint::default();
 			for points in &*paths {
+				let mut path = Path::new();
 				let mut points = points.iter().copied();
+				let mut came_from = Option::<(CursorPoint, f64)>::None;
 				let mut last = points.next().unwrap();
 				for (point, force) in points {
-					paint.set_stroke_width(12.0 * force as f32);
-					let start = skia_safe::Point::new(last.0.x as f32, last.0.y as f32);
-					let end = skia_safe::Point::new(point.x as f32, point.y as f32);
-
-					canvas.draw_line(start, end, &paint);
+					let start = Point::new(last.0.x as f32, last.0.y as f32);
+					let end = Point::new(point.x as f32, point.y as f32);
+					
+					let dir = end - start;
+					let prev_dir = if let Some(came_from) = came_from {
+						start - Point::new(came_from.0.x as f32, came_from.0.y as f32)
+					} else {
+						dir
+					};
+					let mut normal = Point::new(-dir.y, dir.x);
+					normal.normalize();
+					let mut prev_normal = Point::new(-prev_dir.y, prev_dir.x);
+					prev_normal.normalize();
+					let start_offset = prev_normal * (last.1 as f32) * 6.0;
+					let end_offset = normal * (force as f32) * 6.0;
+					let p1 = start + start_offset;
+					let p2 = start - start_offset;
+					let p3 = end - end_offset;
+					let p4 = end + end_offset;
+					
+					path.add_poly(&[p1, p2, p3, p4], true);
+					came_from = Some(last);
 					last = (point, force);
 				}
+				canvas.draw_path(&path, &paint);
 			}
 		})
 	});
