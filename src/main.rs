@@ -8,10 +8,12 @@ use freya::events::touch::TouchPhase;
 use freya::prelude::*;
 
 use pointer::{MouseButton, PointerType};
-use skia_safe::{BlendMode, Color, Paint, Path, Point, Vertices};
+use skia_safe::{BlendMode, Color, Paint, Path, Point, Vertices, vertices};
 use std::collections::VecDeque;
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
 use log::error;
 use skia_safe::vertices::VertexMode;
 
@@ -30,6 +32,9 @@ enum PathMsg {
 	Move(CursorPoint, f64),
 	End(CursorPoint),
 }
+
+static VARY_WIDTH: AtomicBool = AtomicBool::new(false);
+static VARY_ALPHA: AtomicBool = AtomicBool::new(true);
 
 fn app(cx: Scope) -> Element {
 	let pen_down = use_state(cx, || false);
@@ -66,6 +71,7 @@ fn app(cx: Scope) -> Element {
 					}
 				}
 			}
+			
 			let paint = Paint::default();
 			for points in &*paths {
 				let len = points.len();
@@ -74,8 +80,12 @@ fn app(cx: Scope) -> Element {
 					continue
 				}
 				
-				let mut verts = Vec::new();
-				let mut colors = Vec::new();
+				let mut mesh = vertices::Builder::new(
+					VertexMode::TriangleStrip,
+					points.len() * 2,
+					0,
+					vertices::BuilderFlags::HAS_COLORS,
+				);
 				
 				let (start, start_force) = points[0];
 				let (end, _) = points[1];
@@ -85,73 +95,43 @@ fn app(cx: Scope) -> Element {
 				let mut normal = Point::new(-dir.y, dir.x);
 				normal.normalize();
 				
-				let start_offset = normal * 6.0;
-				verts.push(start + start_offset);
-				verts.push(start - start_offset);
+				let width_percent = if VARY_WIDTH.load(Relaxed) { start_force as f32 } else { 1.0 };
+				let start_offset = normal * width_percent * 4.0;
+				let verts = mesh.positions();
+				verts[0] = start + start_offset;
+				verts[1] = start - start_offset;
+				let alpha_percent = if VARY_ALPHA.load(Relaxed) { start_force as f32 } else { 1.0 };
 				let start_color = Color::from_argb((255.0 * start_force) as u8, 0, 0, 0);
-				colors.push(start_color);
-				colors.push(start_color);
+				let colors = mesh.colors().unwrap();
+				colors[0] = start_color;
+				colors[1] = start_color;
 				
-				for [(prev, _), (next, next_force)] in points.array_windows().copied() {
+				for (prev_idx, [(prev, _), (next, next_force)]) in points.array_windows().copied().enumerate() {
+					let i3 = (prev_idx + 1) * 2;
+					let i4 = i3 + 1;
 					let prev = Point::new(prev.x as f32, prev.y as f32);
 					let next = Point::new(next.x as f32, next.y as f32);
 					
 					let dir = next - prev;
 					let mut normal = Point::new(-dir.y, dir.x);
 					normal.normalize();
-					let next_force = next_force as f32;
-					let next_offset = normal * 6.0;
+					let width_percent = if VARY_WIDTH.load(Relaxed) { next_force as f32 } else { 1.0 };
+					let next_offset = normal * width_percent * 4.0;
 					let p3 = next - next_offset;
 					let p4 = next + next_offset;
-					let a2 = (255.0 * next_force) as u8;
+					let alpha_percent = if VARY_ALPHA.load(Relaxed) { next_force as f32 } else { 1.0 };
+					let a2 = (255.0 * alpha_percent) as u8;
 					let next_color = Color::from_argb(a2, 0, 0, 0);
-					verts.push(p3);
-					verts.push(p4);
-					colors.push(next_color);
-					colors.push(next_color)
+					let verts = mesh.positions();
+					verts[i3] = p3;
+					verts[i4] = p4;
+					let colors = mesh.colors().unwrap();
+					colors[i3] = next_color;
+					colors[i4] = next_color;
 				};
 				
-				let texs = vec![Point::default(); verts.len()];
-				let verts = Vertices::new_copy(
-					VertexMode::TriangleStrip,
-					&verts,
-					&texs,
-					&colors,
-					None
-				);
-				
-				canvas.draw_vertices(&verts, BlendMode::Multiply, &paint);
-				
-				// let mut path = Path::new();
-				// let mut points = points.iter().copied();
-				// let mut came_from = Option::<(CursorPoint, f64)>::None;
-				// let mut last = points.next().unwrap();
-				// for (point, force) in points {
-				// 	let start = Point::new(last.0.x as f32, last.0.y as f32);
-				// 	let end = Point::new(point.x as f32, point.y as f32);
-				//
-				// 	let dir = end - start;
-				// 	let prev_dir = if let Some(came_from) = came_from {
-				// 		start - Point::new(came_from.0.x as f32, came_from.0.y as f32)
-				// 	} else {
-				// 		dir
-				// 	};
-				// 	let mut normal = Point::new(-dir.y, dir.x);
-				// 	normal.normalize();
-				// 	let mut prev_normal = Point::new(-prev_dir.y, prev_dir.x);
-				// 	prev_normal.normalize();
-				// 	let start_offset = prev_normal * (last.1 as f32) * 6.0;
-				// 	let end_offset = normal * (force as f32) * 6.0;
-				// 	let p1 = start + start_offset;
-				// 	let p2 = start - start_offset;
-				// 	let p3 = end - end_offset;
-				// 	let p4 = end + end_offset;
-				//
-				// 	path.add_poly(&[p1, p2, p3, p4], true);
-				// 	came_from = Some(last);
-				// 	last = (point, force);
-				// }
-				// canvas.draw_path(&path, &paint);
+				let verts = mesh.detach();
+				canvas.draw_vertices(&verts, BlendMode::Modulate, &paint);
 			}
 		})
 	});
@@ -195,7 +175,7 @@ fn app(cx: Scope) -> Element {
 			channel
 				.write()
 				.0
-				.send(dbg!(PathMsg::Start(e.element_coordinates, 0.5)))
+				.send(dbg!(PathMsg::Start(e.element_coordinates, 1.0)))
 				.unwrap();
 		}
 	};
@@ -204,7 +184,7 @@ fn app(cx: Scope) -> Element {
 			channel
 				.write()
 				.0
-				.send(PathMsg::Move(e.element_coordinates, 0.5))
+				.send(PathMsg::Move(e.element_coordinates, 1.0))
 				.unwrap();
 		}
 	};
