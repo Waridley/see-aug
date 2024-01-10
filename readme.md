@@ -1,3 +1,5 @@
+[![Rust](https://github.com/Waridley/see-aug/actions/workflows/rust.yml/badge.svg)](https://github.com/Waridley/see-aug/actions/workflows/rust.yml)
+
 This will be a sheet music viewing and annotation program with a major emphasis on 
 accessibility for low-vision users.
 
