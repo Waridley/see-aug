@@ -4,13 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-freya = { version = "0.1.8", features = ["devtools"] }
-dioxus = { version = "0.4", features = ["macro", "hooks"] }
-skia-safe = "0.63"
+freya = { version = "0.1.8", features = ["devtools", "log"] }
+# Use the same version as Freya for all of these:
+dioxus = { version = "*", features = ["macro", "hooks"] }
+dioxus-std = { version = "*", features = ["utils"] }
+skia-safe = "*"
+log = "*"
+tokio = "*"
 
-crossbeam = "0.8.3"
+# Utils
+arc-swap = "1.6.0"
+boxcar = "0.2.4"
 image = "0.24"
-log = "0.4.20"
+
 
 [profile.dev]
 opt-level = 1
