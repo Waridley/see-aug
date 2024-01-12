@@ -1,0 +1,17 @@
+[package]
+name = "see-aug-mr-imp"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+image = { workspace = true }
+log = { workspace = true }
+quick-xml = { version = "0.31.0", features = ["serialize"] }
+zip = "0.10.0-alpha.1"
+tokio = { workspace = true, features = ["fs"] }
+serde = { version = "1.0.188", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

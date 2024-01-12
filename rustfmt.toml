@@ -1,1 +1,4 @@
 hard_tabs = true
+
+# nightly
+imports_granularity = "crate"

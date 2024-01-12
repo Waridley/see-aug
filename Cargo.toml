@@ -3,19 +3,31 @@ name = "see-aug"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
+[workspace]
+members = ["mr-imp"]
+
+[workspace.dependencies]
 freya = { version = "0.1.8", features = ["devtools", "log"] }
 # Use the same version as Freya for all of these:
-dioxus = { version = "*", features = ["macro", "hooks"] }
-dioxus-std = { version = "*", features = ["utils"] }
-skia-safe = "*"
 log = "*"
 tokio = "*"
 
 # Utils
+image = "0.24"
+
+[dependencies]
+freya = { workspace = true }
+# Use the same version as Freya for all of these:
+dioxus = { version = "*", features = ["macro", "hooks"] }
+dioxus-std = { version = "*", features = ["utils"] }
+skia-safe = "*"
+log = { workspace = true }
+tokio = { workspace = true }
+
+# Utils
 arc-swap = "1.6.0"
 boxcar = "0.2.4"
-image = "0.24"
+image = { workspace = true }
 
 
 [profile.dev]
