@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["mr-imp"]
+members = ["crates/mr-imp", "crates/library"]
 
 [workspace.dependencies]
 freya = { version = "0.1.8", features = ["devtools", "log"] }
@@ -13,9 +13,13 @@ log = "*"
 tokio = "*"
 
 # Utils
+async_zip = "0.0.16"
 image = "0.24"
+serde = { version = "1", features = ["derive"] }
 
 [dependencies]
+mr-imp = { package = "see-aug-mr-imp", path = "crates/mr-imp" }
+
 freya = { workspace = true }
 # Use the same version as Freya for all of these:
 dioxus = { version = "*", features = ["macro", "hooks"] }

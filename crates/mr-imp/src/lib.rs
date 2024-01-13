@@ -4,15 +4,14 @@ use serde::{Deserialize, Serialize};
 use std::{
 	ffi::OsStr,
 	fmt::{Display, Formatter},
-	io::{BufReader, Cursor, Read},
 	path::{Path, PathBuf},
 };
-use zip::{file::read::Store, metadata::std::Full, DirectoryLocator};
 use MRSError::*;
 
 /// A loaded MusicReader (`.mrs`) file
 #[derive(Debug)]
-struct MRSFile {
+pub struct MRSFile {
+	pub path: PathBuf,
 	pub pages: Vec<PageImages>,
 	pub bookmarks: Result<Bookmarks, MRSError>,
 	pub info: Result<Piece, MRSError>,
@@ -24,38 +23,37 @@ impl MRSFile {
 		let mut bookmarks = Err(Missing);
 		let mut info = Err(Missing);
 
-		let bytes = tokio::fs::read(path).await?;
+		let path = PathBuf::from(path.as_ref());
+		let reader = async_zip::tokio::read::fs::ZipFileReader::new(&path)
+			.await
+			.map_err(|e| std::io::Error::other(e))?;
 
-		// `zip::Archive::open_at` but with buffered file loaded from Tokio above
-		let disk = DirectoryLocator::from_io(Cursor::new(&*bytes))?;
-		assert_eq!(disk.descriptor.disk_id(), 0);
-		let files = disk.into_directory()?.seek_to_files::<Full>()?;
-
-		for file in files {
-			let file = match file {
+		for i in 0..reader.file().entries().len() {
+			let mut reader = match reader.reader_with_entry(i).await {
 				Ok(file) => file,
 				Err(e) => {
 					error!("failed to load archived file: {e}");
 					continue;
 				}
 			};
-			let path = PathBuf::from(std::str::from_utf8(file.meta.name()).unwrap());
-			let name = path.display();
 
-			let file = file.assume_in_disk(Cursor::new(&*bytes)); // .mrs files are not split up
-			let mut store = Store::default();
-			let file = file
-				.reader()
-				.map_err(ZipErr)
-				.and_then(|result| result.seek_to_data().map_err(IoErr))
-				.and_then(|result| result.remove_encryption_io().map_err(IoErr))
-				.map(|result| result.expect(".mrs files shouldn't be encrypted"))
-				.map(|builder| builder.build_with_buffering(&mut store, |disk| disk));
+			let path = PathBuf::from(
+				String::from_utf8_lossy(reader.entry().filename().as_bytes()).as_ref(),
+			);
+			let name = path.display();
 
 			let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
 				error!("archived file `{name}` is missing file stem (is a sub-directory?)");
 				continue;
 			};
+
+			let mut buf = Vec::new();
+			let buf = reader
+				.read_to_end_checked(&mut buf)
+				.await
+				.map_err(ZipErr)
+				.map(|_| buf);
+
 			match path.extension().and_then(OsStr::to_str) {
 				Some("png") => {
 					let Some((stem, page_num)) = stem.rsplit_once("-") else {
@@ -65,11 +63,7 @@ impl MRSFile {
 					let page_num = page_num.parse::<usize>().map_err(std::io::Error::other)?;
 					pages.resize_with(usize::max(page_num, pages.len()), PageImages::default);
 					let i = page_num - 1;
-					let img = file.and_then(|mut reader| {
-						let mut buf = Vec::new();
-						reader.read_to_end(&mut buf).map_err(IoErr)?;
-						image::load_from_memory(&*buf).map_err(ImageErr)
-					});
+					let img = buf.and_then(|buf| image::load_from_memory(&*buf).map_err(ImageErr));
 					match stem {
 						"page" => pages[i].page = img,
 						"thumbnail" => pages[i].thumbnail = img,
@@ -78,25 +72,29 @@ impl MRSFile {
 						other => error!("unexpected file stem `{other}` in archived file `{name}`"),
 					}
 				}
-				Some("xml") => match stem {
-					"info" => {
-						info = file.and_then(|reader| {
-							quick_xml::de::from_reader(BufReader::new(reader)).map_err(XmlErr)
-						})
+				Some("xml") => {
+					let buf = buf.and_then(|buf| {
+						String::from_utf8(buf)
+							.map_err(|e| XmlErr(quick_xml::de::DeError::Custom(e.to_string())))
+					});
+					match stem {
+						"info" => {
+							info = buf.and_then(|s| quick_xml::de::from_str(&s).map_err(XmlErr))
+						}
+						"bookmarks" => {
+							bookmarks =
+								buf.and_then(|s| quick_xml::de::from_str(&s).map_err(XmlErr))
+						}
+						other => error!("unexpected xml file: `{other}`"),
 					}
-					"bookmarks" => {
-						bookmarks = file.and_then(|reader| {
-							quick_xml::de::from_reader(BufReader::new(reader)).map_err(XmlErr)
-						})
-					}
-					other => error!("unexpected xml file: `{other}`"),
-				},
+				}
 				Some(other) => error!("unknown extension `{other}`"),
 				None => error!("`{name}` is missing extension"),
 			}
 		}
 
 		Ok(Self {
+			path,
 			pages,
 			bookmarks,
 			info,
@@ -124,22 +122,30 @@ impl PageImages {
 
 impl std::fmt::Debug for PageImages {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		fn variant_only(img: &DynamicImage) -> &'static str {
-			use DynamicImage::*;
-			match img {
-				ImageLuma8(_) => "Luma8",
-				ImageLumaA8(_) => "LumaA8",
-				ImageRgb8(_) => "Rgb8",
-				ImageRgba8(_) => "Rgba8",
-				ImageLuma16(_) => "Luma16",
-				ImageLumaA16(_) => "LumaA16",
-				ImageRgb16(_) => "Rgb16",
-				ImageRgba16(_) => "Rgba16",
-				ImageRgb32F(_) => "Rgb32F",
-				ImageRgba32F(_) => "Rgba32F",
-				_ => "DynamicImage",
+		fn variant_only(img: &DynamicImage) -> impl std::fmt::Debug {
+			struct VariantName(&'static str);
+			impl std::fmt::Debug for VariantName {
+				fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+					write!(f, "{}", self.0)
+				}
 			}
+
+			use DynamicImage::*;
+			VariantName(match img {
+				ImageLuma8(_) => "Luma8(..)",
+				ImageLumaA8(_) => "LumaA8(..)",
+				ImageRgb8(_) => "Rgb8(..)",
+				ImageRgba8(_) => "Rgba8(..)",
+				ImageLuma16(_) => "Luma16(..)",
+				ImageLumaA16(_) => "LumaA16(..)",
+				ImageRgb16(_) => "Rgb16(..)",
+				ImageRgba16(_) => "Rgba16(..)",
+				ImageRgb32F(_) => "Rgb32F(..)",
+				ImageRgba32F(_) => "Rgba32F(..)",
+				_ => "DynamicImage",
+			})
 		}
+
 		f.debug_struct("Page")
 			.field("page", &self.page.as_ref().map(variant_only))
 			.field("thumbnail", &self.thumbnail.as_ref().map(variant_only))
@@ -167,7 +173,7 @@ type ImageResult = Result<DynamicImage, MRSError>;
 pub enum MRSError {
 	#[default]
 	Missing,
-	ZipErr(zip::error::MethodNotSupported),
+	ZipErr(async_zip::error::ZipError),
 	ImageErr(image::ImageError),
 	XmlErr(quick_xml::DeError),
 	IoErr(std::io::Error),
@@ -191,6 +197,7 @@ pub struct Piece {
 	pub pages: Pages,
 	pub measures: Measures,
 	pub parts: Parts,
+	pub recordings: Option<Recordings>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -261,7 +268,12 @@ pub struct Part {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Bookmarks {
+pub struct Recordings {
+	// TODO: Figure out what fields Recordings should have
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Bookmarks {
 	// TODO: Figure out what fields Bookmarks should have
 }
 
@@ -271,6 +283,6 @@ mod tests {
 
 	#[tokio::test]
 	async fn load_files() {
-		dbg!(MRSFile::load("Bourree.mrs").await).unwrap();
+		MRSFile::load("Bourree.mrs").await.unwrap();
 	}
 }

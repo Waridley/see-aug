@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async_zip = { workspace = true, features = ["tokio", "tokio-fs", "deflate", "zstd"] }
 image = { workspace = true }
 log = { workspace = true }
-quick-xml = { version = "0.31.0", features = ["serialize"] }
-zip = "0.10.0-alpha.1"
+quick-xml = { version = "0.31.0", features = ["serialize", "async-tokio"] }
 tokio = { workspace = true, features = ["fs"] }
-serde = { version = "1.0.188", features = ["derive"] }
+serde = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

@@ -198,6 +198,7 @@ impl StrokePipeline {
 	fn new() -> Self {
 		Self::default()
 	}
+
 	fn draw(&self, canvas: &mut Canvas) {
 		for stroke in &**self.rendered.lock().unwrap() {
 			canvas.draw_vertices(stroke, BlendMode::Modulate, &self.paint);
