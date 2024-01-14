@@ -271,7 +271,21 @@ pub struct Recordings {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Bookmarks {
-	// TODO: Figure out what fields Bookmarks should have
+	pub bookmark: Option<Vec<Bookmark>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Bookmark {
+	pub r#type: String,
+	pub pageimage: usize,
+	pub location: BookmarkLocation,
+	pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BookmarkLocation {
+	pub x: usize,
+	pub y: usize,
 }
 
 #[cfg(test)]
@@ -280,9 +294,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn load_files() {
-		println!("{:#X?}", MRSFile::load("Bourree.mrs").await.unwrap());
-		println!("{:#X?}", MRSFile::load("Bourree_annotated.mrs").await.unwrap());
-		println!("{:#X?}", MRSFile::load("Menuet.mrs").await.unwrap());
-		
+		MRSFile::load("Bourree_annotated.mrs").await.unwrap();
+		MRSFile::load("Menuet.mrs").await.unwrap();
 	}
 }
