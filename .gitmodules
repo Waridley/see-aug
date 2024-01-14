@@ -1,0 +1,3 @@
+[submodule "crates/mr-imp/vend/rs-async-mrs"]
+	path = crates/mr-imp/vend/rs-async-mrs
+	url = git@github.com:Waridley/rs-async-mrs.git

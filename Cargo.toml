@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["crates/mr-imp", "crates/library"]
+members = ["crates/*", "crates/mr-imp/vend/rs-async-mrs"]
 
 [workspace.dependencies]
 freya = { version = "0.1.8", features = ["devtools", "log"] }

@@ -24,21 +24,14 @@ impl MRSFile {
 		let mut info = Err(Missing);
 
 		let path = PathBuf::from(path.as_ref());
-		let reader = async_zip::tokio::read::fs::ZipFileReader::new(&path)
+		let reader = async_mrs::tokio::read::fs::ZipFileReader::new(&path)
 			.await
 			.map_err(|e| std::io::Error::other(e))?;
 
 		for i in 0..reader.file().entries().len() {
-			let mut reader = match reader.reader_with_entry(i).await {
-				Ok(file) => file,
-				Err(e) => {
-					error!("failed to load archived file: {e}");
-					continue;
-				}
-			};
-
+			let reader = reader.clone();
 			let path = PathBuf::from(
-				String::from_utf8_lossy(reader.entry().filename().as_bytes()).as_ref(),
+				String::from_utf8_lossy(reader.file().entries()[i].filename().as_bytes()).as_ref(),
 			);
 			let name = path.display();
 
@@ -48,11 +41,15 @@ impl MRSFile {
 			};
 
 			let mut buf = Vec::new();
-			let buf = reader
-				.read_to_end_checked(&mut buf)
-				.await
-				.map_err(ZipErr)
-				.map(|_| buf);
+			let buf = tokio::spawn(async move {
+				reader
+					.reader_with_entry(i).await
+					.map_err(ZipErr)?
+					.read_to_end_checked(&mut buf)
+					.await
+					.map_err(ZipErr)
+					.map(|_| buf)
+			});
 
 			match path.extension().and_then(OsStr::to_str) {
 				Some("png") => {
@@ -63,7 +60,7 @@ impl MRSFile {
 					let page_num = page_num.parse::<usize>().map_err(std::io::Error::other)?;
 					pages.resize_with(usize::max(page_num, pages.len()), PageImages::default);
 					let i = page_num - 1;
-					let img = buf.and_then(|buf| image::load_from_memory(&*buf).map_err(ImageErr));
+					let img = buf.await.unwrap().and_then(|buf| image::load_from_memory(&*buf).map_err(ImageErr));
 					match stem {
 						"page" => pages[i].page = img,
 						"thumbnail" => pages[i].thumbnail = img,
@@ -73,7 +70,7 @@ impl MRSFile {
 					}
 				}
 				Some("xml") => {
-					let buf = buf.and_then(|buf| {
+					let buf = buf.await.unwrap().and_then(|buf| {
 						String::from_utf8(buf)
 							.map_err(|e| XmlErr(quick_xml::de::DeError::Custom(e.to_string())))
 					});
@@ -173,7 +170,7 @@ type ImageResult = Result<DynamicImage, MRSError>;
 pub enum MRSError {
 	#[default]
 	Missing,
-	ZipErr(async_zip::error::ZipError),
+	ZipErr(async_mrs::error::ZipError),
 	ImageErr(image::ImageError),
 	XmlErr(quick_xml::DeError),
 	IoErr(std::io::Error),
@@ -195,8 +192,8 @@ impl Display for MRSError {
 pub struct Piece {
 	pub information: Information,
 	pub pages: Pages,
-	pub measures: Measures,
-	pub parts: Parts,
+	pub measures: Option<Measures>,
+	pub parts: Option<Parts>,
 	pub recordings: Option<Recordings>,
 }
 
@@ -233,7 +230,7 @@ pub enum PageTurn {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Measures {
-	pub measure: Vec<Measure>,
+	pub measure: Option<Vec<Measure>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -256,7 +253,7 @@ pub struct Parts {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImageInfo {
-	pub part: Vec<Part>,
+	pub part: Option<Vec<Part>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -283,6 +280,9 @@ mod tests {
 
 	#[tokio::test]
 	async fn load_files() {
-		MRSFile::load("Bourree.mrs").await.unwrap();
+		println!("{:#X?}", MRSFile::load("Bourree.mrs").await.unwrap());
+		println!("{:#X?}", MRSFile::load("Bourree_annotated.mrs").await.unwrap());
+		println!("{:#X?}", MRSFile::load("Menuet.mrs").await.unwrap());
+		
 	}
 }
