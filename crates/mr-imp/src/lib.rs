@@ -409,7 +409,8 @@ mod tests {
 		} = MRSFile::load("Bourree_annotated.mrs").await.unwrap();
 		
 		assert_eq!(pages.len(), 2);
-		for PageImages { page, thumbnail, annotations_local, annotations_remote } in pages {
+		for (i, PageImages { page, thumbnail, annotations_local, annotations_remote }) in pages.into_iter().enumerate() {
+			let path = path.join(format!("page-{}", i + 1));
 			expect_fields!(path => [page, thumbnail, annotations_local, annotations_remote]);
 		}
 		
@@ -446,7 +447,7 @@ mod tests {
 		      #[allow(unused)]
 		      let $var = match $var {
 						Err(Missing) => None,
-						Ok(other) => Some(other),
+						Ok(val) => Some(val),
 			      Err(e) => {
 							error!("{e} ({} -> {})", $path.display(), stringify!($var));
 							return None
@@ -476,13 +477,24 @@ mod tests {
 						}
 					};
 					
-					for PageImages { page, thumbnail, annotations_local, annotations_remote } in pages {
-						expect_if_present!(path => [page, thumbnail, annotations_local, annotations_remote]);
+					for (i, PageImages { page, thumbnail, annotations_local, annotations_remote }) in pages.into_iter().enumerate() {
+						let path = path.join(format!("<page {}>", i + 1));
+						expect_if_present!(path => [page, annotations_local, annotations_remote]);
+						if let Err(e) = thumbnail {
+							// can always regenerate thumbnails
+							warn!("{e} ({} -> thumbnail)", path.display());
+						}
 					}
 					
 					expect_if_present!(path => [bookmarks]);
 					
-					info.expect(&format!("{} -> info.xml", path.display()));
+					match info {
+						Ok(_) => {}
+						Err(e) => {
+							error!("{e} ({} -> info.xml)", path.display());
+							return None
+						}
+					};
 					
 					Some(())
 				})).await.unwrap();
