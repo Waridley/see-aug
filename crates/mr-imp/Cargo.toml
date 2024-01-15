@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 async_mrs = { path = "vend/rs-async-mrs", features = ["tokio", "tokio-fs", "deflate"] }
+glob = "0.3.1"
 image = { workspace = true }
 log = { workspace = true }
 quick-xml = { version = "0.31.0", features = ["serialize", "async-tokio"] }
@@ -15,3 +16,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+simple_logger = "4.3.3"

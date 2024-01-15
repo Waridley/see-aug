@@ -1,3 +1,4 @@
+#![feature(async_closure)]
 use image::DynamicImage;
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -27,66 +28,90 @@ impl MRSFile {
 		let reader = async_mrs::tokio::read::fs::ZipFileReader::new(&path)
 			.await
 			.map_err(|e| std::io::Error::other(e))?;
-
-		for i in 0..reader.file().entries().len() {
+		let mrs_filename = path.display();
+		
+		let mut buf = Vec::new();
+		let mut backbuf = Vec::new();
+		
+		let mut task = {
 			let reader = reader.clone();
-			let path = PathBuf::from(
+			(reader.file().entries().len() > 0).then(|| tokio::spawn(async move {
+				reader
+					.reader_with_entry(0).await
+					.map_err(ZipErr)?
+					.read_to_end_checked(&mut backbuf)
+					.await
+					.map_err(ZipErr)?;
+				Result::<_, MRSError>::Ok(backbuf)
+			}))
+		};
+		
+		for i in 0..reader.file().entries().len() {
+			let entry_path = PathBuf::from(
 				String::from_utf8_lossy(reader.file().entries()[i].filename().as_bytes()).as_ref(),
 			);
-			let name = path.display();
-
-			let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
-				error!("archived file `{name}` is missing file stem (is a sub-directory?)");
+			let entry_filename = entry_path.display();
+			
+			let mut backbuf = match task.take().unwrap().await.unwrap() {
+				Ok(backbuf) => backbuf,
+				Err(e) => {
+					error!("couldn't load entry {} (`{entry_filename}`) from `{mrs_filename}`: {e}", i);
+					continue;
+				},
+			};
+			std::mem::swap(&mut buf, &mut backbuf);
+			let reader = reader.clone();
+			task = (reader.file().entries().len() > i + 1).then(|| tokio::spawn(async move {
+				backbuf.clear();
+				reader
+					.reader_with_entry(i + 1).await
+					.map_err(ZipErr)?
+					.read_to_end_checked(&mut backbuf)
+					.await
+					.map_err(ZipErr)?;
+				Ok(backbuf)
+			}));
+			
+			
+			let Some(stem) = entry_path.file_stem().and_then(OsStr::to_str) else {
+				error!("archived file `{entry_filename}` is missing file stem (is a sub-directory?)");
 				continue;
 			};
 
-			let mut buf = Vec::new();
-			let buf = tokio::spawn(async move {
-				reader
-					.reader_with_entry(i).await
-					.map_err(ZipErr)?
-					.read_to_end_checked(&mut buf)
-					.await
-					.map_err(ZipErr)
-					.map(|_| buf)
-			});
-
-			match path.extension().and_then(OsStr::to_str) {
+			match entry_path.extension().and_then(OsStr::to_str) {
 				Some("png") => {
 					let Some((stem, page_num)) = stem.rsplit_once("-") else {
-						error!("unexpected archived file name `{name}`");
+						error!("unexpected archived file name `{entry_filename}`");
 						continue;
 					};
 					let page_num = page_num.parse::<usize>().map_err(std::io::Error::other)?;
 					pages.resize_with(usize::max(page_num, pages.len()), PageImages::default);
 					let i = page_num - 1;
-					let img = buf.await.unwrap().and_then(|buf| image::load_from_memory(&*buf).map_err(ImageErr));
+					let img = image::load_from_memory(&*buf).map_err(ImageErr);
 					match stem {
 						"page" => pages[i].page = img,
 						"thumbnail" => pages[i].thumbnail = img,
 						"annotations-local" => pages[i].annotations_local = img,
 						"annotations-remote" => pages[i].annotations_remote = img,
-						other => error!("unexpected file stem `{other}` in archived file `{name}`"),
+						other => error!("unexpected file stem `{other}` in archived file `{entry_filename}`"),
 					}
 				}
 				Some("xml") => {
-					let buf = buf.await.unwrap().and_then(|buf| {
-						String::from_utf8(buf)
-							.map_err(|e| XmlErr(quick_xml::de::DeError::Custom(e.to_string())))
-					});
+					let buf = std::str::from_utf8(&buf)
+						.map_err(|e| XmlErr(quick_xml::de::DeError::Custom(e.to_string())));
 					match stem {
 						"info" => {
-							info = buf.and_then(|s| quick_xml::de::from_str(&s).map_err(XmlErr))
+							info = buf.and_then(|s| quick_xml::de::from_str(s).map_err(XmlErr))
 						}
 						"bookmarks" => {
 							bookmarks =
-								buf.and_then(|s| quick_xml::de::from_str(&s).map_err(XmlErr))
+								buf.and_then(|s| quick_xml::de::from_str(s).map_err(XmlErr))
 						}
 						other => error!("unexpected xml file: `{other}`"),
 					}
 				}
 				Some(other) => error!("unknown extension `{other}`"),
-				None => error!("`{name}` is missing extension"),
+				None => error!("`{entry_filename}` is missing extension"),
 			}
 		}
 
@@ -290,11 +315,43 @@ pub struct BookmarkLocation {
 
 #[cfg(test)]
 mod tests {
+	use log::warn;
+	use tokio::task::JoinSet;
 	use super::*;
 
 	#[tokio::test]
 	async fn load_files() {
+		simple_logger::SimpleLogger::new().env().init().unwrap();
 		MRSFile::load("Bourree_annotated.mrs").await.unwrap();
 		MRSFile::load("Menuet.mrs").await.unwrap();
+	}
+	
+	#[ignore]
+	#[tokio::test]
+	async fn load_dir() {
+		simple_logger::SimpleLogger::new().env().init().unwrap();
+		let glob = glob::glob(&*(std::env::var("MR_LIB_DIR").unwrap() + "*.mrs")).expect("please set MR_LIB_DIR environment variable to run this test");
+		let mut set = JoinSet::new();
+		for path in glob {
+			let path = match path {
+				Ok(path) => path,
+				Err(e) => { warn!("{e}"); continue },
+			};
+			
+			set.spawn(async move {
+				match MRSFile::load(&path).await {
+					Ok(file) => Some(file),
+					Err(e) => {
+						error!("{e} -- file: {}", path.display());
+						return None
+					}
+				}
+			});
+		}
+		let mut failed = 0;
+		while let Some(file) = set.join_next().await {
+			if file.unwrap().is_none() { failed += 1 }
+		}
+		if failed > 0 { panic!("one or more files failed to load")}
 	}
 }
