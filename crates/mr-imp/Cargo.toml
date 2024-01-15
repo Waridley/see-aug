@@ -16,4 +16,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
-simple_logger = "4.3.3"
+test-log = "0.2.14"

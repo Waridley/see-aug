@@ -124,6 +124,69 @@ impl MRSFile {
 	}
 }
 
+type ImageResult = Result<DynamicImage, MRSError>;
+
+#[derive(Default, Debug)]
+pub enum MRSError {
+	#[default]
+	Missing,
+	ZipErr(async_mrs::error::ZipError),
+	ImageErr(image::ImageError),
+	XmlErr(quick_xml::DeError),
+	IoErr(std::io::Error),
+}
+
+impl Display for MRSError {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Missing => f.write_str("image file not found in archive"),
+			ZipErr(e) => e.fmt(f),
+			ImageErr(e) => e.fmt(f),
+			XmlErr(e) => e.fmt(f),
+			IoErr(e) => e.fmt(f),
+		}
+	}
+}
+
+pub trait MRSResultExt {
+	type OkTy;
+	fn unwrap_if_present(self) -> Option<Self::OkTy>;
+	fn expect_if_present(self, msg: impl AsRef<str>) -> Option<Self::OkTy>;
+}
+
+impl<T> MRSResultExt for Result<T, MRSError> {
+	type OkTy = T;
+	fn unwrap_if_present(self) -> Option<Self::OkTy> {
+		match self {
+			Err(Missing) => None,
+			other => Some(other.unwrap()),
+		}
+	}
+	fn expect_if_present(self, msg: impl AsRef<str>) -> Option<Self::OkTy> {
+		match self {
+			Err(Missing) => None,
+			other => Some(other.expect(msg.as_ref())),
+		}
+	}
+}
+
+impl<'a, T> MRSResultExt for &'a Result<T, MRSError> {
+	type OkTy = &'a T;
+	
+	fn unwrap_if_present(self) -> Option<Self::OkTy> {
+		match self {
+			Err(Missing) => None,
+			other => Some(other.as_ref().unwrap()),
+		}
+	}
+	fn expect_if_present(self, msg: impl AsRef<str>) -> Option<Self::OkTy> {
+		match self {
+			Err(Missing) => None,
+			other => Some(other.as_ref().expect(msg.as_ref())),
+		}
+	}
+}
+
 pub struct PageImages {
 	pub page: ImageResult,
 	pub thumbnail: ImageResult,
@@ -189,30 +252,6 @@ impl Default for PageImages {
 	}
 }
 
-type ImageResult = Result<DynamicImage, MRSError>;
-
-#[derive(Default, Debug)]
-pub enum MRSError {
-	#[default]
-	Missing,
-	ZipErr(async_mrs::error::ZipError),
-	ImageErr(image::ImageError),
-	XmlErr(quick_xml::DeError),
-	IoErr(std::io::Error),
-}
-
-impl Display for MRSError {
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Missing => f.write_str("image file not found in archive"),
-			ZipErr(e) => e.fmt(f),
-			ImageErr(e) => e.fmt(f),
-			XmlErr(e) => e.fmt(f),
-			IoErr(e) => e.fmt(f),
-		}
-	}
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Piece {
 	pub information: Information,
@@ -226,9 +265,9 @@ pub struct Piece {
 pub struct Information {
 	pub identifier: String,
 	pub title: String,
-	pub creator: Option<String>,
+	pub creator: Option<Vec<String>>,
 	pub description: Option<String>,
-	pub subject: Vec<String>,
+	pub subject: Option<Vec<String>>,
 	pub publisher: Option<String>,
 	pub copyright: Option<String>,
 }
@@ -315,21 +354,20 @@ pub struct BookmarkLocation {
 
 #[cfg(test)]
 mod tests {
+	use test_log::test;
 	use log::warn;
 	use tokio::task::JoinSet;
 	use super::*;
 
-	#[tokio::test]
+	#[test(tokio::test)]
 	async fn load_files() {
-		simple_logger::SimpleLogger::new().env().init().unwrap();
 		MRSFile::load("Bourree_annotated.mrs").await.unwrap();
 		MRSFile::load("Menuet.mrs").await.unwrap();
 	}
 	
 	#[ignore]
-	#[tokio::test]
+	#[test(tokio::test)]
 	async fn load_dir() {
-		simple_logger::SimpleLogger::new().env().init().unwrap();
 		let glob = glob::glob(&*(std::env::var("MR_LIB_DIR").unwrap() + "*.mrs")).expect("please set MR_LIB_DIR environment variable to run this test");
 		let mut set = JoinSet::new();
 		for path in glob {
@@ -342,7 +380,7 @@ mod tests {
 				match MRSFile::load(&path).await {
 					Ok(file) => Some(file),
 					Err(e) => {
-						error!("{e} -- file: {}", path.display());
+						error!("{e} ({})", path.display());
 						return None
 					}
 				}
@@ -352,6 +390,109 @@ mod tests {
 		while let Some(file) = set.join_next().await {
 			if file.unwrap().is_none() { failed += 1 }
 		}
-		if failed > 0 { panic!("one or more files failed to load")}
+		if failed > 0 { panic!("{failed} files failed to load")}
+	}
+	
+	macro_rules! expect_fields {
+    ($path:expr => [$($var:ident),*$(,)?]) => {
+	    $(
+	      #[allow(unused)]
+	      let $var = $var.expect(&*format!("{} -> {}", $path.display(), stringify!($var)));
+	    )*
+    };
+	}
+	
+	#[test(tokio::test)]
+	async fn parse_files() {
+		let MRSFile {
+			path, pages, bookmarks, info
+		} = MRSFile::load("Bourree_annotated.mrs").await.unwrap();
+		
+		assert_eq!(pages.len(), 2);
+		for PageImages { page, thumbnail, annotations_local, annotations_remote } in pages {
+			expect_fields!(path => [page, thumbnail, annotations_local, annotations_remote]);
+		}
+		
+		expect_fields!(path => [bookmarks]);
+		let bookmark = bookmarks.bookmark;
+		expect_fields!(path => [bookmark]);
+		assert_eq!(bookmark.len(), 1);
+		
+		let Piece {
+			information: Information {
+				identifier, title, creator, description, subject, publisher, copyright
+			},
+			pages, measures, parts, recordings,
+		} = info.expect(&format!("{} -> info.xml", path.display()));
+		
+		expect_fields!(path => [creator, description, publisher, copyright, measures, parts, recordings]);
+		
+		assert_eq!(identifier, "MR76928326");
+		assert_eq!(title, "English Suite I: Bourree I");
+		assert_eq!(creator, vec!["Bach, Johann Sebastian [composer]"]);
+		assert_eq!(subject.as_ref().map(Vec::len), Some(3));
+		assert_eq!(pages.page.len(), 2);
+	}
+	
+	
+	#[ignore]
+	#[test(tokio::test)]
+	async fn parse_dir() {
+		let glob = glob::glob(&*(std::env::var("MR_LIB_DIR").unwrap() + "*.mrs")).expect("please set MR_LIB_DIR environment variable to run this test");
+		
+		macro_rules! expect_if_present {
+	    ($path:expr => [$($var:ident),*$(,)?]) => {
+		    $(
+		      #[allow(unused)]
+		      let $var = match $var {
+						Err(Missing) => None,
+						Ok(other) => Some(other),
+			      Err(e) => {
+							error!("{e} ({} -> {})", $path.display(), stringify!($var));
+							return None
+						}
+					};
+		    )*
+	    };
+		}
+		
+		// Prevent using too much memory and slowing down due to swap
+		let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+		
+		tokio::spawn(async move {
+			for path in glob {
+				let path = match path {
+					Ok(path) => path,
+					Err(e) => { warn!("{e}"); continue },
+				};
+				
+				tx.send(tokio::spawn(async move {
+					let MRSFile { path, pages, bookmarks, info } = match MRSFile::load(&path).await {
+						Ok(file) => file,
+						Err(e) => {
+							warn!("{e} ({})", path.display());
+							// Files that fail to load will be caught by `load_dir`. Just check if the rest parse here.
+							return Some(())
+						}
+					};
+					
+					for PageImages { page, thumbnail, annotations_local, annotations_remote } in pages {
+						expect_if_present!(path => [page, thumbnail, annotations_local, annotations_remote]);
+					}
+					
+					expect_if_present!(path => [bookmarks]);
+					
+					info.expect(&format!("{} -> info.xml", path.display()));
+					
+					Some(())
+				})).await.unwrap();
+			}
+		});
+		let mut failed = 0;
+		while let Some(jh) = rx.recv().await {
+			let file = jh.await;
+			if file.unwrap().is_none() { failed += 1 }
+		}
+		if failed > 0 { panic!("{failed} files failed to parse")}
 	}
 }
