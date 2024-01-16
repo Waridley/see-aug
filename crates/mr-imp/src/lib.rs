@@ -87,7 +87,8 @@ impl MRSFile {
 					let page_num = page_num.parse::<usize>().map_err(std::io::Error::other)?;
 					pages.resize_with(usize::max(page_num, pages.len()), PageImages::default);
 					let i = page_num - 1;
-					let img = image::load_from_memory(&*buf).map_err(ImageErr);
+					// let img = image::load_from_memory(&*buf).map_err(ImageErr);
+					let img = Ok(PageImage::Png(buf.clone()));
 					match stem {
 						"page" => pages[i].page = img,
 						"thumbnail" => pages[i].thumbnail = img,
@@ -124,7 +125,7 @@ impl MRSFile {
 	}
 }
 
-type ImageResult = Result<DynamicImage, MRSError>;
+type ImageResult = Result<PageImage, MRSError>;
 
 #[derive(Default, Debug)]
 pub enum MRSError {
@@ -187,6 +188,7 @@ impl<'a, T> MRSResultExt for &'a Result<T, MRSError> {
 	}
 }
 
+#[derive(Debug)]
 pub struct PageImages {
 	pub page: ImageResult,
 	pub thumbnail: ImageResult,
@@ -205,44 +207,23 @@ impl PageImages {
 	}
 }
 
-impl std::fmt::Debug for PageImages {
+impl std::fmt::Debug for PageImage {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		fn variant_only(img: &DynamicImage) -> impl std::fmt::Debug {
-			struct VariantName(&'static str);
-			impl std::fmt::Debug for VariantName {
-				fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-					write!(f, "{}", self.0)
-				}
-			}
-
-			use DynamicImage::*;
-			VariantName(match img {
-				ImageLuma8(_) => "Luma8(..)",
-				ImageLumaA8(_) => "LumaA8(..)",
-				ImageRgb8(_) => "Rgb8(..)",
-				ImageRgba8(_) => "Rgba8(..)",
-				ImageLuma16(_) => "Luma16(..)",
-				ImageLumaA16(_) => "LumaA16(..)",
-				ImageRgb16(_) => "Rgb16(..)",
-				ImageRgba16(_) => "Rgba16(..)",
-				ImageRgb32F(_) => "Rgb32F(..)",
-				ImageRgba32F(_) => "Rgba32F(..)",
-				_ => "DynamicImage",
-			})
-		}
-
-		f.debug_struct("Page")
-			.field("page", &self.page.as_ref().map(variant_only))
-			.field("thumbnail", &self.thumbnail.as_ref().map(variant_only))
-			.field(
-				"annotations_local",
-				&self.annotations_local.as_ref().map(variant_only),
-			)
-			.field(
-				"annotations_remote",
-				&self.annotations_remote.as_ref().map(variant_only),
-			)
-			.finish()
+		use DynamicImage::*;
+		f.write_str(match self {
+			Self::Png(_) => "Png(..)",
+			Self::DynImg(ImageLuma8(_)) => "Luma8(..)",
+			Self::DynImg(ImageLumaA8(_)) => "LumaA8(..)",
+			Self::DynImg(ImageRgb8(_)) => "Rgb8(..)",
+			Self::DynImg(ImageRgba8(_)) => "Rgba8(..)",
+			Self::DynImg(ImageLuma16(_)) => "Luma16(..)",
+			Self::DynImg(ImageLumaA16(_)) => "LumaA16(..)",
+			Self::DynImg(ImageRgb16(_)) => "Rgb16(..)",
+			Self::DynImg(ImageRgba16(_)) => "Rgba16(..)",
+			Self::DynImg(ImageRgb32F(_)) => "Rgb32F(..)",
+			Self::DynImg(ImageRgba32F(_)) => "Rgba32F(..)",
+			Self::DynImg(_) => "DynamicImage",
+		})
 	}
 }
 
@@ -250,6 +231,11 @@ impl Default for PageImages {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+pub enum PageImage {
+	Png(Vec<u8>),
+	DynImg(DynamicImage),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -457,8 +443,7 @@ mod tests {
 	    };
 		}
 		
-		// Prevent using too much memory and slowing down due to swap
-		let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+		let (tx, mut rx) = tokio::sync::mpsc::channel(32);
 		
 		tokio::spawn(async move {
 			for path in glob {
