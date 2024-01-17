@@ -8,4 +8,6 @@ edition = "2021"
 [dependencies]
 async_zip = { workspace = true }
 image = { workspace = true }
+ron = { workspace = true }
 serde = { workspace = true }
+skia-safe = { workspace = true }

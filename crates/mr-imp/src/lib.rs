@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 use image::DynamicImage;
 use log::error;
 use serde::{Deserialize, Serialize};

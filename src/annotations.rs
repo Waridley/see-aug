@@ -4,11 +4,8 @@ use dioxus::{
 	hooks::{use_memo, use_ref, use_state},
 };
 use freya::prelude::{mouse::MouseButton, pointer::PointerType, touch::TouchPhase, *};
-use log::{error, info};
-use skia_safe::{
-	vertices, vertices::VertexMode, wrapper::PointerWrapper, BlendMode, Canvas, Color, Paint,
-	Point, Vertices,
-};
+use log::error;
+use skia_safe::{vertices, vertices::VertexMode, wrapper::PointerWrapper, BlendMode, Canvas, Color, Paint, Point, Vertices,};
 use std::{
 	sync::{
 		atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
@@ -29,9 +26,11 @@ enum PathMsg {
 // TODO: Put these in a configuration struct
 static VARY_WIDTH: AtomicBool = AtomicBool::new(true);
 static VARY_ALPHA: AtomicBool = AtomicBool::new(false);
-static DRAW_INTERVAL_MILLIS: AtomicU64 = AtomicU64::new(33);
+static DRAW_INTERVAL_MILLIS: AtomicU64 = AtomicU64::new(1000 / 240);
 
-pub fn app(cx: Scope) -> Element {
+#[allow(non_snake_case)]
+#[inline_props]
+pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 	let last_update = use_state(cx, || Instant::now());
 
 	let pen_down = use_state(cx, || false);
@@ -43,7 +42,6 @@ pub fn app(cx: Scope) -> Element {
 		let pipeline = pipeline.read().clone();
 		last_update.set(Instant::now());
 		Box::new(move |canvas, _fonts, _area| {
-			info!("drawing...");
 			pipeline.draw(canvas);
 		})
 	});
@@ -68,7 +66,7 @@ pub fn app(cx: Scope) -> Element {
 
 	let on_touch = |e: TouchEvent| {
 		let TouchData {
-			element_coordinates: pos,
+			screen_coordinates: pos,
 			finger_id: _,
 			force,
 			phase,
@@ -87,14 +85,15 @@ pub fn app(cx: Scope) -> Element {
 			// 		on devices without force support.
 			return;
 		};
+		let mut force_update = false;
 		let msg = match phase {
-			TouchPhase::Started => PathMsg::Start(pos, force),
+			TouchPhase::Started => { force_update = true; PathMsg::Start(pos, force) },
 			TouchPhase::Moved => PathMsg::Move(pos, force),
-			TouchPhase::Ended => PathMsg::End(pos),
-			TouchPhase::Cancelled => PathMsg::End(pos), // TODO: Can we cancel strokes?
+			TouchPhase::Ended => { force_update = true; PathMsg::End(pos) },
+			TouchPhase::Cancelled => { force_update = true; PathMsg::End(pos) }, // TODO: Can we cancel strokes?
 		};
 		tx.send(msg).unwrap();
-		if Instant::now().duration_since(*last_update.get())
+		if force_update || Instant::now().duration_since(*last_update.get())
 			> Duration::from_millis(DRAW_INTERVAL_MILLIS.load(Relaxed))
 		{
 			dirty.modify(|_| ());
@@ -104,7 +103,7 @@ pub fn app(cx: Scope) -> Element {
 	let start_path = |e: MouseEvent| {
 		if matches!(e.trigger_button, Some(MouseButton::Left)) {
 			pen_down.set(true);
-			tx.send(PathMsg::Start(e.element_coordinates, 1.0)).unwrap();
+			tx.send(PathMsg::Start(e.screen_coordinates, 0.0)).unwrap();
 			if Instant::now().duration_since(*last_update.get())
 				> Duration::from_millis(DRAW_INTERVAL_MILLIS.load(Relaxed))
 			{
@@ -114,7 +113,7 @@ pub fn app(cx: Scope) -> Element {
 	};
 	let continue_path = |e: MouseEvent| {
 		if *pen_down.get() {
-			tx.send(PathMsg::Move(e.element_coordinates, 1.0)).unwrap();
+			tx.send(PathMsg::Move(e.screen_coordinates, 1.0)).unwrap();
 		}
 		if Instant::now().duration_since(*last_update.get())
 			> Duration::from_millis(DRAW_INTERVAL_MILLIS.load(Relaxed))
@@ -130,30 +129,43 @@ pub fn app(cx: Scope) -> Element {
 			}
 		) {
 			pen_down.set(false);
-			tx.send(PathMsg::End(e.element_coordinates)).unwrap();
-			if Instant::now().duration_since(*last_update.get()) > Duration::from_millis(32) {
-				dirty.modify(|_| ());
-			}
+			tx.send(PathMsg::End(e.screen_coordinates)).unwrap();
+			dirty.modify(|_| ());
+		}
+	};
+	
+	let on_ptr_exit = |e: PointerEvent| {
+		if *pen_down.get() {
+			pen_down.set(false);
+			tx.send(PathMsg::End(e.screen_coordinates)).unwrap();
+			dirty.modify(|_| ());
 		}
 	};
 
 	render!(
 		rect {
 			width: "100%",
-			height: "100%",
-			display: "center",
 			ontouchstart: on_touch,
 			ontouchmove: on_touch,
 			ontouchend: on_touch,
 			onmousedown: start_path,
 			onmouseover: continue_path,
 			onpointerup: end_path,
-			Canvas {
-				canvas: canvas,
-				width: "100%",
-				height: "100%",
-			}
-		}
+			onpointerleave: on_ptr_exit,
+			children,
+			rect {
+				height: "0",
+				layer: "-100",
+				offset_y: "-100%",
+				rect {
+					width: "100%",
+					height: "100%",
+					layer: "-100",
+					background: "rgba(0, 0, 0, 0)",
+					canvas_reference: canvas.attribute(cx),
+				},
+			},
+		},
 	)
 }
 
@@ -199,7 +211,7 @@ impl StrokePipeline {
 		Self::default()
 	}
 
-	fn draw(&self, canvas: &mut Canvas) {
+	fn draw(&self, canvas: &Canvas) {
 		for stroke in &**self.rendered.lock().unwrap() {
 			canvas.draw_vertices(stroke, BlendMode::Modulate, &self.paint);
 		}
@@ -308,7 +320,7 @@ impl StrokePipeline {
 					f: force as f32,
 				};
 				let ([p3, p4], c2) = Self::verts_for(normal, sample);
-				if dir.length() > 4.0 {
+				if dir.length() > 3.0 {
 					// don't draw lines too short
 					self.push_verts(p3, p4, c2);
 				} else {

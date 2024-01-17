@@ -1,5 +1,5 @@
 [patch.crates-io]
-winit = { version = "0.28.6", git = "https://github.com/Waridley/winit.git", branch = "pen_0.28.6" }
+winit = { version = "0.28.7", git = "https://github.com/Waridley/winit.git", branch = "pen_0.28.7" }
 
 # Add the contents of this file to `config.toml` to enable "fast build" configuration. Please read the notes below.
 

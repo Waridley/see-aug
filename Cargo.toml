@@ -5,26 +5,34 @@ edition = "2021"
 
 [workspace]
 members = ["crates/*", "crates/mr-imp/vend/rs-async-mrs"]
+exclude = ["vend"]
 
 [workspace.dependencies]
-freya = { version = "0.1.8", features = ["devtools", "log"] }
+freya = { version = "0.1.8", path = "vend/freya/crates/freya", features = ["devtools", "log"] }
 # Use the same version as Freya for all of these:
+freya-node-state = { version = "*", path = "vend/freya/crates/state" }
+bytes = "*"
 log = "*"
+skia-safe = "*"
 tokio = "*"
 
 # Utils
 async_zip = "0.0.16"
 image = "0.24"
+ron = "0.8.1"
 serde = { version = "1", features = ["derive"] }
 
 [dependencies]
+library = { package = "see-aug-library", path = "crates/library" }
 mr-imp = { package = "see-aug-mr-imp", path = "crates/mr-imp" }
 
 freya = { workspace = true }
 # Use the same version as Freya for all of these:
+freya-node-state = { workspace = true }
+bytes = { workspace = true }
 dioxus = { version = "*", features = ["macro", "hooks"] }
 dioxus-std = { version = "*", features = ["utils"] }
-skia-safe = "*"
+skia-safe = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true }
 
@@ -32,7 +40,3 @@ tokio = { workspace = true }
 arc-swap = "1.6.0"
 boxcar = "0.2.4"
 image = { workspace = true }
-
-
-[profile.dev]
-opt-level = 1
