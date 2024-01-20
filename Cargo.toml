@@ -39,6 +39,7 @@ log = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+winit = "*"
 
 # Utils
 arc-swap = "1.6.0"

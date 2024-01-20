@@ -7,6 +7,7 @@ use std::sync::Arc;
 use freya::prelude::*;
 use tokio::sync::oneshot::error::TryRecvError;
 use tracing_subscriber::{filter, fmt, reload, prelude::*, Registry};
+use winit::platform::x11::WindowBuilderExtX11;
 use freya::events::keyboard::Code;
 use mr_imp::MRSFile;
 use crate::page_rendering::{OpenPiece, PieceView};
@@ -34,10 +35,17 @@ fn main() {
 		log_reload_handle,
 	};
 	
+	let window_hook = |window: winit::window::WindowBuilder| {
+		window
+			.with_inner_size(winit::dpi::LogicalSize::new(1280, 720))
+			.with_maximized(true)
+	};
+	
 	launch_cfg(
 		app,
 		LaunchConfig::builder()
 			.with_title("See Augmented")
+			.with_window_builder(window_hook)
 			.with_state(state)
 			.build(),
 	);
