@@ -3896,6 +3896,8 @@ dependencies = [
  "see-aug-mr-imp",
  "skia-safe",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

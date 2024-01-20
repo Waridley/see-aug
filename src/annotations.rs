@@ -28,19 +28,19 @@ static VARY_WIDTH: AtomicBool = AtomicBool::new(true);
 static VARY_ALPHA: AtomicBool = AtomicBool::new(false);
 static DRAW_INTERVAL_MILLIS: AtomicU64 = AtomicU64::new(1000 / 240);
 
-#[allow(non_snake_case)]
-#[inline_props]
+#[component]
 pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 	let last_update = use_state(cx, || Instant::now());
 
 	let pen_down = use_state(cx, || false);
 
 	let pipeline = use_ref(cx, || Arc::new(StrokePipeline::new()));
-	let dirty = use_state(cx, || ());
+	let dirty = use_state(cx, || true);
 
-	let canvas = use_canvas(cx, dirty, |_| {
+	let canvas = use_canvas(cx, dirty, |dirty| {
 		let pipeline = pipeline.read().clone();
 		last_update.set(Instant::now());
+		if *dirty.get() { dirty.set(false); }
 		Box::new(move |canvas, _fonts, _area| {
 			pipeline.draw(canvas);
 		})
@@ -93,10 +93,11 @@ pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 			TouchPhase::Cancelled => { force_update = true; PathMsg::End(pos) }, // TODO: Can we cancel strokes?
 		};
 		tx.send(msg).unwrap();
-		if force_update || Instant::now().duration_since(*last_update.get())
+		if force_update || (Instant::now().duration_since(*last_update.get())
 			> Duration::from_millis(DRAW_INTERVAL_MILLIS.load(Relaxed))
+			&& !*dirty.get())
 		{
-			dirty.modify(|_| ());
+			dirty.set(true);
 		}
 	};
 
@@ -104,10 +105,10 @@ pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 		if matches!(e.trigger_button, Some(MouseButton::Left)) {
 			pen_down.set(true);
 			tx.send(PathMsg::Start(e.screen_coordinates, 0.0)).unwrap();
-			if Instant::now().duration_since(*last_update.get())
+			if !*dirty.get() && Instant::now().duration_since(*last_update.get())
 				> Duration::from_millis(DRAW_INTERVAL_MILLIS.load(Relaxed))
 			{
-				dirty.modify(|_| ());
+				dirty.set(true);
 			}
 		}
 	};
@@ -115,10 +116,10 @@ pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 		if *pen_down.get() {
 			tx.send(PathMsg::Move(e.screen_coordinates, 1.0)).unwrap();
 		}
-		if Instant::now().duration_since(*last_update.get())
+		if !*dirty.get() && Instant::now().duration_since(*last_update.get())
 			> Duration::from_millis(DRAW_INTERVAL_MILLIS.load(Relaxed))
 		{
-			dirty.modify(|_| ());
+			dirty.set(true);
 		}
 	};
 	let end_path = |e: PointerEvent| {
@@ -130,7 +131,7 @@ pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 		) {
 			pen_down.set(false);
 			tx.send(PathMsg::End(e.screen_coordinates)).unwrap();
-			dirty.modify(|_| ());
+			dirty.set(true);
 		}
 	};
 	
@@ -138,7 +139,7 @@ pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 		if *pen_down.get() {
 			pen_down.set(false);
 			tx.send(PathMsg::End(e.screen_coordinates)).unwrap();
-			dirty.modify(|_| ());
+			dirty.set(true);
 		}
 	};
 
@@ -154,6 +155,7 @@ pub fn AnnotationCanvas<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 			onpointerleave: on_ptr_exit,
 			children,
 			rect {
+				width: "100%",
 				height: "0",
 				layer: "-100",
 				offset_y: "-100%",
@@ -320,7 +322,7 @@ impl StrokePipeline {
 					f: force as f32,
 				};
 				let ([p3, p4], c2) = Self::verts_for(normal, sample);
-				if dir.length() > 3.0 {
+				if dir.length() > 2.0 {
 					// don't draw lines too short
 					self.push_verts(p3, p4, c2);
 				} else {

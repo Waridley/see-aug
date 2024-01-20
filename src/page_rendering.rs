@@ -7,7 +7,7 @@ use image::GenericImageView;
 use mr_imp::{MRSFile, PageImage,};
 use crate::annotations::AnnotationCanvas;
 
-#[inline_props]
+#[component]
 pub fn PieceView<'a>(cx: Scope<'a>, width: &'a str, height: &'a str) -> Element {
 	let piece = cx.consume_context::<OpenPiece>();
 	
@@ -38,14 +38,12 @@ pub fn PieceView<'a>(cx: Scope<'a>, width: &'a str, height: &'a str) -> Element 
 		let data = data.as_deref().unwrap();
 		let data = bytes_to_data(cx, data);
 		images.push(rsx!(
-			AnnotationCanvas {
-				Page {
-					System {
-						image {
-							width: "100%",
-							height: "283",
-							image_data: data,
-						},
+			Page {
+				System {
+					image {
+						width: "100%",
+						height: "283",
+						image_data: data,
 					},
 				},
 			},
@@ -73,17 +71,19 @@ pub fn PieceView<'a>(cx: Scope<'a>, width: &'a str, height: &'a str) -> Element 
 	}
 }
 
-#[inline_props]
+#[component]
 pub fn Page<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 	render! {
-		rect {
-			width: "100%",
-			children
+		AnnotationCanvas {
+			rect {
+				width: "100%",
+				children
+			}
 		}
 	}
 }
 
-#[inline_props]
+#[component]
 pub fn System<'a>(cx: Scope<'a>, children: Element<'a>) -> Element {
 	render! {
 		rect {
